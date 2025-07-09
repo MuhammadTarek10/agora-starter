@@ -1,7 +1,3 @@
-// File: src/app/speak/page.tsx
-// This is the UPDATED speaker page. It now shows the local speaker,
-// a grid of other speakers, and a count of the audience.
-
 "use client";
 
 import AgoraRTC, {
@@ -14,7 +10,7 @@ import AgoraRTC, {
   usePublish,
   useRemoteUsers,
 } from "agora-rtc-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // Define the type for the connection data we'll get from our API
 interface AgoraConnectionData {
@@ -27,29 +23,52 @@ interface AgoraConnectionData {
 // Component that handles the core video room logic
 function SpeakerRoom({
   connectionData,
-  onLeave,
 }: {
   connectionData: AgoraConnectionData;
-  onLeave: () => void;
 }) {
   const { appId, channel, token, uid } = connectionData;
 
+  // --- State for Recording ---
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingRecording, setIsProcessingRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+
   // Hooks to manage local media tracks
-  const { localMicrophoneTrack } = useLocalMicrophoneTrack();
-  const { localCameraTrack } = useLocalCameraTrack();
+  const { localMicrophoneTrack } = useLocalMicrophoneTrack(true); // Start with mic enabled
+  const { localCameraTrack } = useLocalCameraTrack(true); // Start with camera enabled
 
-  // Hook to join the channel
   useJoin({ appid: appId, channel, token, uid });
-
-  // Hook to publish the local tracks
   usePublish([localMicrophoneTrack, localCameraTrack]);
-
-  // Hook to get the list of all remote users
   const remoteUsers = useRemoteUsers();
 
-  // **KEY CHANGE**: Filter users into speakers and audience
   const otherSpeakers = remoteUsers.filter((user) => user.hasVideo);
   const audienceCount = remoteUsers.filter((user) => !user.hasVideo).length;
+
+  // --- Recording Handler Functions ---
+  const handleRecording = async (action: "start" | "stop") => {
+    setIsProcessingRecording(true);
+    setRecordingError(null);
+    try {
+      const response = await fetch("/api/agora/recording", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to ${action} recording.`);
+      }
+      setIsRecording(action === "start");
+      console.log(`Recording action '${action}' successful:`, data);
+    } catch (err) {
+      setRecordingError(
+        err instanceof Error ? err.message : "An unknown error occurred"
+      );
+      console.error(err);
+    } finally {
+      setIsProcessingRecording(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -59,18 +78,28 @@ function SpeakerRoom({
           <p className="absolute top-2 left-2 z-10 bg-black bg-opacity-50 px-2 py-1 rounded text-sm">
             Your View
           </p>
+          {/* Recording Indicator */}
+          {isRecording && (
+            <div className="absolute top-2 right-2 z-10 flex items-center gap-2 bg-red-600 text-white px-3 py-1 rounded-md">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+              </span>
+              REC
+            </div>
+          )}
           <LocalVideoTrack
             track={localCameraTrack}
             play={true}
             className="w-full h-full object-cover"
           />
         </div>
-        <div className="absolute top-6 right-6 bg-black bg-opacity-60 text-white px-4 py-2 rounded-lg">
+        <div className="absolute top-14 right-6 bg-black bg-opacity-60 text-white px-4 py-2 rounded-lg">
           <p className="font-semibold text-lg">Audience: {audienceCount}</p>
         </div>
       </div>
 
-      {/* **KEY CHANGE**: Bottom section with a grid of other speakers */}
+      {/* Bottom section with a grid of other speakers */}
       <div className="w-full h-2/5 p-4 border-t-2 border-gray-800">
         <h3 className="text-lg font-semibold mb-2 text-gray-300">
           Other Speakers ({otherSpeakers.length})
@@ -96,6 +125,31 @@ function SpeakerRoom({
           )}
         </div>
       </div>
+
+      {/* **REMOVED**: All manual media and leave controls have been removed. */}
+      {/* Recording controls remain as requested. */}
+      <div className="flex justify-center items-center flex-wrap gap-4 p-4 bg-gray-900 border-t border-gray-700">
+        {!isRecording ? (
+          <button
+            onClick={() => handleRecording("start")}
+            disabled={isProcessingRecording}
+            className="px-4 py-2 rounded-lg font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed">
+            {isProcessingRecording ? "Starting..." : "Start Recording"}
+          </button>
+        ) : (
+          <button
+            onClick={() => handleRecording("stop")}
+            disabled={isProcessingRecording}
+            className="px-4 py-2 rounded-lg font-semibold bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:cursor-not-allowed">
+            {isProcessingRecording ? "Stopping..." : "Stop Recording"}
+          </button>
+        )}
+        {recordingError && (
+          <p className="w-full text-center text-red-400 mt-2">
+            Recording Error: {recordingError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -104,41 +158,37 @@ function SpeakerRoom({
 export default function SpeakPage() {
   const [connectionData, setConnectionData] =
     useState<AgoraConnectionData | null>(null);
-  const [isCallActive, setIsCallActive] = useState(false);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
-  const joinCall = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch("/api/agora", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "publisher" }), // Ensure role is publisher
-      });
-      if (!response.ok)
-        throw new Error(
-          `Failed to fetch Agora token: ${await response.text()}`
+  useEffect(() => {
+    const joinCall = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await fetch("/api/agora", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "publisher" }),
+        });
+        if (!response.ok)
+          throw new Error(
+            `Failed to fetch Agora token: ${await response.text()}`
+          );
+        const data: AgoraConnectionData = await response.json();
+        setConnectionData(data);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "An unknown error occurred"
         );
-      const data: AgoraConnectionData = await response.json();
-      setConnectionData(data);
-      setIsCallActive(true);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "An unknown error occurred"
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const leaveCall = () => {
-    setIsCallActive(false);
-    setConnectionData(null);
-  };
+      } finally {
+        setLoading(false);
+      }
+    };
+    joinCall();
+  }, []);
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-2 md:p-8 bg-gray-950 text-white">
@@ -147,28 +197,24 @@ export default function SpeakPage() {
           Speaker Broadcast Room
         </h1>
         <div className="h-[calc(100%-68px)]">
-          {isCallActive && connectionData ? (
+          {loading && (
+            <p className="text-xl text-center p-8">Joining Broadcast...</p>
+          )}
+          {error && (
+            <p className="text-xl text-red-500 text-center p-8">
+              Error: {error}
+            </p>
+          )}
+          {connectionData ? (
             <AgoraRTCProvider client={client}>
-              <SpeakerRoom
-                connectionData={connectionData}
-                onLeave={leaveCall}
-              />
+              <SpeakerRoom connectionData={connectionData} />
             </AgoraRTCProvider>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full gap-4">
-              {loading && <p className="text-xl">Joining...</p>}
-              {error && <p className="text-xl text-red-500">Error: {error}</p>}
-              {!loading && (
-                <>
-                  <p className="text-lg">You are not currently broadcasting.</p>
-                  <button
-                    onClick={joinCall}
-                    className="px-8 py-3 bg-green-600 hover:bg-green-700 rounded-lg text-white font-bold text-xl">
-                    Start Broadcast
-                  </button>
-                </>
-              )}
-            </div>
+            !loading && (
+              <p className="text-xl text-center p-8">
+                Could not connect to the broadcast room.
+              </p>
+            )
           )}
         </div>
       </div>

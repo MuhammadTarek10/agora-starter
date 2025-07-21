@@ -48,14 +48,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = await request.json();
-  const { action } = body;
-  const authHeader = `Basic ${Buffer.from(
-    `${AGORA_CUSTOMER_ID}:${AGORA_CUSTOMER_SECRET}`
-  ).toString("base64")}`;
-  const agoraApiBaseUrl = `https://api.agora.io/v1/apps/${AGORA_APP_ID}/cloud_recording`;
-
   try {
+    const body = await request.json();
+    const { action } = body;
+    const authHeader = `Basic ${Buffer.from(
+      `${AGORA_CUSTOMER_ID}:${AGORA_CUSTOMER_SECRET}`
+    ).toString("base64")}`;
+    const agoraApiBaseUrl = `https://api.agora.io/v1/apps/${AGORA_APP_ID}/cloud_recording`;
+
     if (action === "start") {
       // --- **LOGICAL FIX**: Check if a recording is already in progress ---
       if (recordingState.resourceId && recordingState.sid) {

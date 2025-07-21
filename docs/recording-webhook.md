@@ -109,7 +109,3 @@ Below is a breakdown of the different event types, grouped by category.
 | 1001       | `postpone_transcode_final_result` | Final result of a postponed transcoding task after the recording is complete. |
 
 ---
-
-## Summary
-
-This breakdown should help you parse and handle the various notifications you receive from the Agora Cloud Recording service. Use the `eventType` field to determine the type of event and refer to the relevant payload fields for details.
